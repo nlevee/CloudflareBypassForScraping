@@ -1,0 +1,8 @@
+{
+    "labels": ["renovate"],
+    "extends": [
+        "config:recommended",
+        ":automergeDigest",
+        ":automergeMinor"
+    ]
+}
