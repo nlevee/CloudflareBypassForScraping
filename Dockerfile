@@ -8,9 +8,7 @@ ENV DOCKERMODE=true
 # Install necessary packages for Xvfb and pyvirtualdisplay
 RUN apt-get update && \
     apt-get install -y \
-    pipx \
     chromium \
-    wget \
     gnupg \
     ca-certificates \
     libx11-xcb1 \
