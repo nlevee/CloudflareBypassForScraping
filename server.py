@@ -10,45 +10,29 @@ from pydantic import BaseModel
 from typing import Dict
 import argparse
 
-browser_path = "/usr/bin/google-chrome"
 app = FastAPI()
 log = True
 
 # Pydantic model for the response
-class V1RequestBase(BaseModel):
-    # V1RequestBase
+class ClientRequest(BaseModel):
     cmd: str = None
     cookies: list = None
     maxTimeout: int = None
-    proxy: dict = None
-    session: str = None
-    session_ttl_minutes: int = None
-
-    # V1Request
     url: str = None
     postData: str = None
-    returnOnlyCookies: bool = None
 
-class ChallengeResolutionResultT(BaseModel):
+class Solution(BaseModel):
     url: str = None
     status: int = None
-    headers: dict = None
     response: str = None
     cookies: list = None
     userAgent: str = None
         
-class V1ResponseBase(BaseModel):
-    # V1ResponseBase
+class ClientResponse(BaseModel):
     status: str = None
     message: str = ""
-    session: str = None
-    sessions: list[str] = None
-    startTimestamp: int = None
-    endTimestamp: int = None
     version: str = "1.0.0"
-
-    # V1ResponseSolution
-    solution: ChallengeResolutionResultT = None
+    solution: Solution = None
 
 
 # Function to check if the URL is safe
@@ -65,16 +49,11 @@ def is_safe_url(url: str) -> bool:
 
 # Function to bypass Cloudflare protection
 def bypass_cloudflare(url: str, retries: int, log: bool) -> ChromiumPage:
-    from pyvirtualdisplay import Display
-
-    # Start Xvfb for Docker
-    display = Display(visible=0, size=(1920, 1080))
-    display.start()
-
     options = ChromiumOptions()
+    options.set_paths(browser_path="/usr/bin/chromium-browser", local_port=9252).headless(False)
+    options.set_argument("--remote-debugging-port=9252")
     options.set_argument("--no-sandbox")  # Necessary for Docker
     options.set_argument("--disable-gpu")  # Optional, helps in some cases
-    options.set_paths(browser_path=browser_path).headless(False)
 
     driver = ChromiumPage(addr_or_opts=options)
     try:
@@ -85,33 +64,38 @@ def bypass_cloudflare(url: str, retries: int, log: bool) -> ChromiumPage:
         return driver
     except Exception as e:
         driver.quit()
-        display.stop()  # Stop Xvfb
         raise e
 
-# Endpoint to get HTML content and cookies
+# Endpoint to get Solver response
 @app.post("/v1")
-async def get_solverr(request: V1RequestBase):
+async def get_solverr(request: ClientRequest):
+    from pyvirtualdisplay import Display
     if not is_safe_url(request.url):
         raise HTTPException(status_code=400, detail="Invalid URL")
     try:
         if request.cmd == "request.get":
+            # Start Xvfb for Docker
+            display = Display(visible=0, size=(1920, 1080))
+            display.start()
+
+            # Start bypass
             driver = bypass_cloudflare(request.url, 5, log)
-            res = driver.listen.wait()
+            packet = driver.listen.wait()
             cookies = driver.cookies(as_dict=False)
-            
-            sol = ChallengeResolutionResultT()
-            sol.url = res.response.url
-            sol.headers = dict(res.response.headers.lower_items())
-            sol.status = res.response.status
-            sol.response = driver.html
-            sol.userAgent = driver.user_agent
-            sol.cookies = cookies
+
+            # Build response
+            res = ClientResponse()
+            res.status = "ok"
+            res.solution = Solution(
+                url = packet.response.url,
+                status = packet.response.status,
+                response = driver.html,
+                userAgent = driver.user_agent,
+                cookies = cookies,
+            )
 
             driver.quit()
-
-            res = V1ResponseBase()
-            res.status = "ok"
-            res.solution = sol
+            display.stop()  # Stop Xvfb
 
             return res
     except Exception as e:
@@ -120,9 +104,7 @@ async def get_solverr(request: V1RequestBase):
 # Main entry point
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Cloudflare bypass api")
-
     parser.add_argument("--nolog", action="store_true", help="Disable logging")
-    parser.add_argument("--headless", action="store_true", help="Run in headless mode")
 
     args = parser.parse_args()
     if args.nolog:
