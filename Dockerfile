@@ -40,9 +40,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY . .
 
-# Expose the port for remote debugging
-EXPOSE 9222
-
 # Expose the port for the FastAPI server
 EXPOSE 8000
 

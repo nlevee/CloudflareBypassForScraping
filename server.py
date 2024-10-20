@@ -50,8 +50,7 @@ def is_safe_url(url: str) -> bool:
 # Function to bypass Cloudflare protection
 def bypass_cloudflare(url: str, retries: int, log: bool) -> ChromiumPage:
     options = ChromiumOptions()
-    options.set_paths(browser_path="/usr/bin/chromium-browser", local_port=9252).headless(False)
-    options.set_argument("--remote-debugging-port=9252")
+    options.set_paths(browser_path="/usr/bin/chromium-browser").headless(False).auto_port()
     options.set_argument("--no-sandbox")  # Necessary for Docker
     options.set_argument("--disable-gpu")  # Optional, helps in some cases
 
@@ -81,6 +80,7 @@ async def get_solverr(request: ClientRequest):
             # Start bypass
             driver = bypass_cloudflare(request.url, 5, log)
             packet = driver.listen.wait()
+            driver.listen.stop()
             cookies = driver.cookies(as_dict=False)
 
             # Build response
