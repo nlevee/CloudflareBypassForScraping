@@ -1,17 +1,17 @@
-import json
-import re
-import os
+import argparse
+import ipaddress
 from urllib.parse import urlparse
 
-from CloudflareBypasser import CloudflareBypasser
-from DrissionPage import ChromiumPage, ChromiumOptions
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Dict
-import argparse
+from DrissionPage import ChromiumPage, ChromiumOptions
+from pyvirtualdisplay import Display
+
+from CloudflareBypasser import CloudflareBypasser
 
 app = FastAPI()
-log = True
+enable_log = True
+
 
 # Pydantic model for the response
 class ClientRequest(BaseModel):
@@ -21,13 +21,15 @@ class ClientRequest(BaseModel):
     url: str = None
     postData: str = None
 
+
 class Solution(BaseModel):
     url: str = None
     status: int = None
     response: str = None
     cookies: list = None
     userAgent: str = None
-        
+
+
 class ClientResponse(BaseModel):
     status: str = None
     message: str = ""
@@ -38,17 +40,20 @@ class ClientResponse(BaseModel):
 # Function to check if the URL is safe
 def is_safe_url(url: str) -> bool:
     parsed_url = urlparse(url)
-    ip_pattern = re.compile(
-        r"^(127\.0\.0\.1|localhost|0\.0\.0\.0|::1|10\.\d+\.\d+\.\d+|172\.1[6-9]\.\d+\.\d+|172\.2[0-9]\.\d+\.\d+|172\.3[0-1]\.\d+\.\d+|192\.168\.\d+\.\d+)$"
-    )
-    hostname = parsed_url.hostname
-    if (hostname and ip_pattern.match(hostname)) or parsed_url.scheme == "file":
-        return False
-    return True
+    safe = True
+    if parsed_url.hostname == 'localhost' or parsed_url.scheme == "file":
+        safe = False
+    else:
+        try:
+            ip_obj = ipaddress.ip_address(parsed_url.hostname)
+            safe = not ip_obj.is_private
+        except ValueError:
+            pass
+    return safe
 
 
 # Function to bypass Cloudflare protection
-def bypass_cloudflare(url: str, retries: int, log: bool) -> ChromiumPage:
+def bypass_cloudflare(url: str, retries: int, enable_log: bool) -> ChromiumPage:
     options = ChromiumOptions()
     options.set_paths(browser_path="/usr/bin/chromium-browser").headless(False).auto_port()
     options.set_argument("--no-sandbox")  # Necessary for Docker
@@ -58,17 +63,17 @@ def bypass_cloudflare(url: str, retries: int, log: bool) -> ChromiumPage:
     try:
         driver.listen.start(targets=url)
         driver.get(url)
-        cf_bypasser = CloudflareBypasser(driver, retries, log)
+        cf_bypasser = CloudflareBypasser(driver, retries, enable_log)
         cf_bypasser.bypass()
         return driver
     except Exception as e:
         driver.quit()
         raise e
 
+
 # Endpoint to get Solver response
 @app.post("/v1")
 async def get_solverr(request: ClientRequest):
-    from pyvirtualdisplay import Display
     if not is_safe_url(request.url):
         raise HTTPException(status_code=400, detail="Invalid URL")
     try:
@@ -78,7 +83,7 @@ async def get_solverr(request: ClientRequest):
             display.start()
 
             # Start bypass
-            driver = bypass_cloudflare(request.url, 5, log)
+            driver = bypass_cloudflare(request.url, 5, enable_log)
             packet = driver.listen.wait()
             driver.listen.stop()
             cookies = driver.cookies(as_dict=False)
@@ -87,11 +92,11 @@ async def get_solverr(request: ClientRequest):
             res = ClientResponse()
             res.status = "ok"
             res.solution = Solution(
-                url = packet.response.url,
-                status = packet.response.status,
-                response = driver.html,
-                userAgent = driver.user_agent,
-                cookies = cookies,
+                url=packet.response.url,
+                status=packet.response.status,
+                response=driver.html,
+                userAgent=driver.user_agent,
+                cookies=cookies,
             )
 
             driver.quit()
@@ -101,16 +106,14 @@ async def get_solverr(request: ClientRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # Main entry point
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Cloudflare bypass api")
-    parser.add_argument("--nolog", action="store_true", help="Disable logging")
+    parser.add_argument("--nolog", action="store_false", help="Disable logging")
 
     args = parser.parse_args()
-    if args.nolog:
-        log = False
-    else:
-        log = True
-    import uvicorn
+    enable_log = args.nolog
 
+    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
